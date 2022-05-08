@@ -1,148 +1,136 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Thu May  5 20:32:36 2022
-
-@author: crawf
-"""
-
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Mar 31 11:13:32 2022
-
-@author: Stephen
-Financial Machhine Learning 
-
-https://towardsdatascience.com/deep-q-learning-tutorial-mindqn-2a4c855abffc
-"""
-
 import numpy as np
 import random 
-import pandas as pd
 import tensorflow as tf
+from tensorflow import keras
 from tensorflow.keras import layers
-from tensorflow import keras 
-from collections import deque
 
-LOSS= keras.losses.Huber()
-OPTIMIZER = keras.optimizers.SGD() #stochastic gradient descent 
+#stock_env = stock_env.StockEnvironment()
+TRAIN_LENGTH = 300
+TEST_LENGTH = 100
+LOSS = keras.losses.Huber()
+OPTIMIZER = keras.optimizers.Adam(learning_rate=0.001)
 METRICS = ['accuracy']
+# Using huber loss for stability
+loss_function = keras.losses.Huber()
 
 class DeepQLearner:
-
-    
-    # need to incorporate epsilon greedy
-    # we want to try learn policy without explicitly modeling the world (T, R)
-    # Q(s, a) --> R maps every state-action pair to a real number that is the expected sum of current and future rewards from taking action a from state s
-    # initalize q table randomly so always have some estimate of the q value for everry state-action pair 
-    # q value must be summ of immediate reward for engaging a stateion-actiono pair and the discounted future rewards we expect to receive after taking that stateaction paiir 
-    # policy(s) = argmaxQ[s, a] for all a from the state s; run until convergence i.e. q values do not change 
-    
-    
-    """
-    Construct class instance
-    
-    @param states: The number of distinct states 
-    @param actions: The number of distinct actions 
-    @param alpha: Learning rate
-    @param gamme: Discount rate
-    @param epsilon: Random action rate
-    @param epsilon_decay: The rate at which the random action rate decreases after each random action
-    """
-    def __init__ (self, states = 100, actions = 4, alpha = 0.2, gamma = 0.9, epsilon = 0.98, epsilon_decay = 0.999, dyna=0):
-        
+    def __init__ (self, states = 100, actions = 3, alpha = 0.2, gamma = 0.9, epsilon = 0.98, epsilon_decay = 0.999, dyna=0, model_name=""):
         # Store all the parameters as attributes (instance variables).
         # Initialize any data structures you need.
-        self.memory = deque(maxlen=1000) # store up to 1000 real experiences 
-        self.states = states
+        
+        np.random.seed(759941)
+        #self.experience_history = deque(maxlen=1000) # storeone thousand past expereinces for replay
+        self.optimizer=keras.optimizers.Adam(lr=0.001)
         self.alpha = alpha
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
-        self.dyna = dyna
-        self.last_move = []
+        self.states = states
         self.actions = actions
-        self.q_net = self.build_model() # a Q net to train
-        self.target_net = self.build_model() # q net for evaluation 
+        self.q_net = keras.load_model(model_name) if len(model_name) else self.build_model()
+        self.q_net_target = None if len(model_name) else self.build_model()         
+        
+        #Experience replay buffers
+        self.action_history = []
+        self.state_history = []
+        self.state_next_history = []
+        self.rewards_history = []
+        self.done_history = []
+        self.episode_reward_history = [] 
+        self.prev_state = None
+        self.prev_action = None
         
     def build_model(self):
-        model = keras.Sequential()
-        model.add(layers.Dense(units=self.states, input_dim=1, activation='relu'))
-        model.add(layers.Dense(units=self.states/2, activation='relu'))
-        model.add(layers.Dense(units=self.states/4, activation='relu'))
-        model.add(layers.Dense(units=self.states/8, activation='relu'))
-        model.add(layers.Dense(self.actions, activation='sigmoid'))
-        model.compile(loss=self.loss, optimizer=OPTIMIZER, metrics=METRICS)
-        print(model.summary())
-        return model 
-    
-    
-    """
-    Define a custom loss function equal based on the predicted Q value and the correct Q value
-    
-    @param output_neuron: The value of the output neuron representing the predicted Q value
-    @param correct value is the 'new estiamte from tabular'
-    """
-    def loss(self, predicted_value, correct_value):
+        #Using https://stackoverflow.com/questions/69933345/expected-min-ndim-2-found-ndim-1-full-shape-received-none
+        single_feature_normalizer = tf.keras.layers.Normalization(axis=None)
+        feature = tf.random.normal((self.states, 1))
+        single_feature_normalizer.adapt(feature)
         
-        return tf.square(correct_value - predicted_value)
+        model = keras.Sequential([
+            tf.keras.layers.Input(shape=(1,)),
+            single_feature_normalizer,
+            tf.keras.layers.Dense(1)
+        ])
+        model.add(layers.Dense(units=self.states, input_dim=self.states, activation="relu"))
+        model.add(layers.Dense(units=self.states/2, activation="relu"))
+        model.add(layers.Dense(units=self.states/4, activation="relu"))
+        model.add(layers.Dense(self.actions/8, activation="relu"))
+        model.add(layers.Dense(self.actions, activation="sigmoid"))
+        model.compile(loss=LOSS, optimizer=OPTIMIZER, metrics=METRICS)
+        return model    
+        
 
-    
     def train (self, s, r):
         # Receive new state s and new reward r.  Update Q-table and return selected action.
         # Consider: The Q-update requires a complete <s, a, s', r> tuple.
         #           How will you know the previous state and action?
-            
-        # grab the last state and action 
         
-        last_experience = self.last_move
+        #Batch size??
+        batch_size = 4
         
-        old_s = last_experience[0]
-        old_a = last_experience[1]
-        
-        # q-update 
-        predicted_q_value = (self.q_net.predict(old_s)) 
-        correct_q_value = (self.gamma*(self.q_net.predict(s)))
-        self.model.fit(predicted_q_value, correct_q_value)
-        
-        # pick new action:
-        epsilon_checker = random.random()
-       
-        # find the new action we plan to take from the new state
-        if epsilon_checker < self.epsilon:
-        
-            a = random.randrange(0, self.actions)
-            self.epsilon = self.epsilon * self.epsilon_decay
-            
+        #Take a random action
+        if (np.random.random() < self.epsilon):
+            a = random.randint(0, self.actions - 1)
+            if self.prev_action is None:
+                return a
         else:
-           a = 0 
-           max_val = -1
-           for i in range(self.actions):
-               correct_q_value = (r + self.gamma*(self.q_net.predict(s, i)))
-               if correct_q_value > max_val:
-                   a = i
-    
-        self.experience_history.append([old_s, old_a, s, r])
-        experience_index = np.random.randint(0, len(self.experience_history), (self.dyna,))
-        
-        for i in range(self.dyna): 
+            # Predict action Q-values
+            # From environment state
+            state_tensor = tf.convert_to_tensor(s)
+            state_tensor = tf.expand_dims(s, 0)        
+            action_probs = self.q_net(state_tensor, training=False)
+            # Take best action
+            a = tf.argmax(action_probs[0]).numpy()
             
-            exp = experience_index[i]
-            selected_experience = self.experience_history[exp]
-
-            dyna_s = selected_experience[0]
-            dyna_a = selected_experience[1]
-            dyna_s_prime = selected_experience[2]
-            dyna_r = selected_experience[3]
-            predicted_q_value = (self.q_net.predict(dyna_s)) 
-            correct_q_value = (r + self.gamma*(self.q_net.predict(dyna_s)))
-            self.model.fit(predicted_q_value, correct_q_value)
         
-        self.last_move = [s, a]
-         
+        #Decay epsilon
+        self.epsilon *= self.epsilon_decay
+        
+        # Save actions and states in replay buffer        
+        self.action_history.append(self.prev_action)
+        self.state_history.append(self.prev_state)
+        self.state_next_history.append(s)
+        self.rewards_history.append(r)
+        
+        #Only update when above batchsize
+        if len(self.rewards_history) > batch_size:
+        
+            # Get indices of samples for replay buffers
+            indices = np.random.choice(range(len(self.rewards_history)), size=batch_size)
+            
+            # Using list comprehension to sample from replay buffer
+            state_sample = np.array([self.state_history[i] for i in indices])
+            state_next_sample = np.array([self.state_next_history[i] for i in indices])
+            rewards_sample = [self.rewards_history[i] for i in indices]
+            action_sample = [self.action_history[i] for i in indices]
+                
+            future_rewards = self.q_net.predict(state_next_sample)        
+            
+            # Q value = reward + discount factor * expected future reward
+            updated_q_values = rewards_sample + self.gamma * tf.reduce_max(future_rewards, axis=1)
+            
+            # Create a mask so we only calculate loss on the updated Q-values
+            masks = tf.one_hot(action_sample, self.actions)
+    
+            with tf.GradientTape() as tape:
+                # Train the model on the states and updated Q-values
+                q_values = self.q_net(state_sample)
+    
+                # Apply the masks to the Q-values to get the Q-value for action taken
+                q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
+                # Calculate loss between new Q-value and old Q-value
+                loss = loss_function(updated_q_values, q_action)
+    
+            # Backpropagation
+            grads = tape.gradient(loss, self.q_net.trainable_variables)
+            self.optimizer.apply_gradients(zip(grads, self.q_net.trainable_variables))
+
+        
+        
+        self.prev_action = a
+        self.prev_state = s
         return a
-    
-    
+
     def test (self, s):
         # Receive new state s.  Do NOT update Q-table, but still return selected action.
         #
@@ -150,12 +138,15 @@ class DeepQLearner:
         # (2) when there is no previous state or action (and hence no Q-update to perform).
         #
         # When testing, you probably do not want to take random actions... (What good would it do?)
-      
-        s = np.array([s,])
-        print("Getting first action from test state: ", s)
-        action = self.q_net.test_on_batch(s)
-        #action = (self.gamma*(self.q_net.predict(s)))
-        print("After actions")
-        self.last_move = [s, action]
         
-        return action
+        
+        state_tensor = tf.convert_to_tensor(s)
+        state_tensor = tf.expand_dims(s, 0)        
+        action_probs = self.q_net(state_tensor, training=False)
+        a = tf.argmax(action_probs[0]).numpy()
+        
+        
+        self.prev_state = s
+        self.prev_action = a
+        
+        return a
