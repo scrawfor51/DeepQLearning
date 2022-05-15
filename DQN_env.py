@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Fri May 13 14:14:58 2022
-
-@author: Stephen
-"""
-
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Created on Wed Apr 20 11:36:30 2022
 @author: Stephen & Tugi 
@@ -24,6 +14,7 @@ import timeit
 import datetime 
 from matplotlib import cm
 from DeepQLearner import DeepQLearner
+from backtester_manual_trading import assess_strategy_dataframe
 import itertools
  
 TRIPS_WITHOUT_DYNA = 500
@@ -32,14 +23,14 @@ FAILURE_RATE = 0
 
 class StockEnvironment:
 
-  def __init__ (self, fixed = 0, floating = 0, starting_cash = None, share_limit = None, indicators = None):
+  def __init__ (self, fixed = 0, floating = 0, starting_cash = None, share_limit = None):
     
     self.shares = share_limit
     self.fixed_cost = fixed
     self.floating_cost = floating
     self.starting_cash = starting_cash
     self.learner = None
-    self.indicators = indicators
+
 
   """
   Helper method to calculate all the indicator values for the date range.
@@ -91,9 +82,10 @@ class StockEnvironment:
   def calc_state (self, df, day, holdings, indicators):
     """ Quantizes the state to a single number. """
     state_list = [holdings] 
+    
     for indicator in indicators:
          
-        current_val = df.iloc[day, indicator] # 0 to -100 # 3 buckets 
+        current_val = df.iloc[day, indicator+1] # 0 to -100 # 3 buckets 
         state_list.append(current_val)
   
     return state_list
@@ -112,15 +104,15 @@ class StockEnvironment:
   @return a trained learner 
   """
   def train_learner( self, start = None, end = None, symbol = None, trips = 0, dyna = 0,
-                     eps = 0.0, eps_decay = 0.0):
+                     eps = 0.0, eps_decay = 0.0, indicators = None):
     
     world = self.prepare_world(start, end, symbol)
     
     
     if dyna > 0:
-      learner = DeepQLearner(states=len(self.indicators) + 1, actions = 3, epsilon=eps,epsilon_decay=eps_decay, dyna=dyna)
+      learner = DeepQLearner(states=len(indicators) + 1, actions = 3, epsilon=eps,epsilon_decay=eps_decay, dyna=dyna)
     else:
-      learner = DeepQLearner(states=len(self.indicators) + 1, actions = 3, epsilon=eps,epsilon_decay=eps_decay)
+      learner = DeepQLearner(states=len(indicators) + 1, actions = 3, epsilon=eps,epsilon_decay=eps_decay)
     
     
     
@@ -144,11 +136,11 @@ class StockEnvironment:
         day_key = world.index[day_tracker] # get the index key for the given day, i.e. '2018-01-01'
         
         if day_tracker == 0:
-            a = learner.test(self.calc_state(world, day_tracker, holdings, self.indicators))
+            a = learner.test(self.calc_state(world, day_tracker, holdings, indicators))
             cash_reward = 0
         else: 
             r = world.iloc[day_tracker, world.columns.get_loc('Portfolio')]/world.iloc[day_tracker - 1, world.columns.get_loc('Portfolio')] - 1
-            a = learner.train(self.calc_state(world, day_tracker, holdings, self.indicators), r)
+            a = learner.train(self.calc_state(world, day_tracker, holdings, indicators), r)
             cash_reward = world.iloc[day_tracker, world.columns.get_loc('Portfolio')] - world.iloc[day_tracker - 1, world.columns.get_loc('Portfolio')]
             
         if a == 0:
@@ -187,6 +179,20 @@ class StockEnvironment:
         
     self.learner = learner
     return learner
+
+
+    
+  def get_baseline(self, start=None, end=None, symbol=None):
+     world = self.prepare_world(start, end, symbol)
+     baseline = world['Price'].copy()
+     baseline.iloc[:] = np.nan
+     baseline.columns = ['Positions']
+     baseline['Positions'] = 1000
+     baseline['Cash'] = self.starting_cash - 1000*world.iloc[0, world.columns.get_loc('Price')]
+     baseline['Portfolio'] = baseline['Cash'] + baseline['Positions'] * world['Price']
+     baseline['Portfolio'] -= self.starting_cash
+     return baseline 
+    
     
 
   """
@@ -196,19 +202,11 @@ class StockEnvironment:
   @param End: End date
   @param Symbol: Stock symbol to trade
   """
-  def test_learner( self, start = None, end = None, symbol = None):
+  def test_learner( self, start = None, end = None, symbol = None, indicators = None):
     
     world = self.prepare_world(start, end, symbol)
-    baseline = world['Price'].copy()
-    baseline.iloc[:] = np.nan
-    baseline.columns = ['Positions']
-    baseline['Positions'] = 1000
-    baseline['Cash'] = self.starting_cash - 1000*world.iloc[0, world.columns.get_loc('Price')]
-    baseline['Portfolio'] = baseline['Cash'] + baseline['Positions'] * world['Price']
     learner = self.learner
     
-    
-
     world['Cash'] = self.starting_cash
     world['Portfolio'] = world['Cash']
     world['Positions'] = 0
@@ -221,7 +219,7 @@ class StockEnvironment:
       
       day_key = world.index[day_tracker] # get the index key for the given day, i.e. '2018-01-01'
       
-      state = self.calc_state(world, day_tracker, holdings, self.indicators)
+      state = self.calc_state(world, day_tracker, holdings, indicators)
       
       if day_tracker == 0:
           a = learner.test(state)
@@ -259,39 +257,16 @@ class StockEnvironment:
       
     
     print("Learner reward: ", world['Portfolio'][-1] - self.starting_cash)
-    print("Baseline made: ", baseline['Portfolio'][-1] - self.starting_cash)
     
     learner_portfolio = world.loc[:,'Portfolio'] - self.starting_cash
-    print(learner_portfolio)
-    baseline_port = baseline['Portfolio'] - self.starting_cash
-    data = {'Learner': learner_portfolio, 'Baseline': baseline_port}
-    compare = pd.DataFrame(data)
     indicators_list = ""
-    for ind in self.indicators:
+    for ind in indicators:
         indicators_list += world.columns[ind]
         indicators_list += " "
-    plot = compare.plot(title=indicators_list[:-1], colormap=cm.Accent)
-    plot.grid()
-    trades = world['Positions'].copy()
-    trades.iloc[1:] = trades.diff().iloc[1:]
-    trades.iloc[0] = 0
-    trades = trades.to_frame()
+    print("Indicators list: ", indicators_list)
+    learner_portfolio.rename(indicators_list)
     
-    trades = trades.loc[(trades!=0).any(axis=1)]
-    trades['Positions'] = trades['Positions'].cumsum()
-    #print("Number of trades: ", trades.shape)
-    
-    for day in trades.index:
-        if trades.loc[day,'Positions'] > 0:
-            plt.axvline(x=day, color = 'blue', alpha=0.25) 
-       
-        elif trades.loc[day,'Positions'] < 0:
-            plt.axvline(x=day, color = 'red', alpha=0.25) 
-        else:
-            plt.axvline(x=day, color = 'black', alpha=0.25)
-
-    plt.show()
-    return None
+    return learner_portfolio 
     
 if __name__ == '__main__':
   # Load the requested stock for the requested dates, instantiate a Q-Learning agent,
@@ -316,127 +291,99 @@ if __name__ == '__main__':
   sim_args.add_argument('--floating', default=0.00, type=float, help='Floating transaction cost.')
   sim_args.add_argument('--shares', default=1000, type=int, help='Number of shares to trade (also position limit).')
   sim_args.add_argument('--symbol', default='DIS', help='Stock symbol to trade.')
-  sim_args.add_argument('--trips', default=5, type=int, help='Round trips through training data.')
+  sim_args.add_argument('--trips', default=1, type=int, help='Round trips through training data.')
 
   args = parser.parse_args()
 
 
-for i in range(8):
+
+    # Create an instance of the environment class.
+env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
+                       share_limit = args.shares)
+    
+baseline = env.get_baseline(start = args.test_start, end = args.test_end,
+                   symbol = args.symbol)
+
+solo_names = ['William Percent Range', 'Bollinger Band Percentage', 'OBV Normalized', 'RSI', 'Aroon Up', 'Aroon Down', 'Stochastic']
+
+solo_comparisons = baseline['Portfolio']
+solo_comparisons.name = 'Baseline'
+print(solo_comparisons)
+for i in range(7):
     indicator = [i]
-    # Create an instance of the environment class.
-    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
-                            share_limit = args.shares, indicators=indicator)
-
-    # Construct, train, and store a Q-learning trader.
+    # Construct, train, and store a Q-lSearning trader.
     env.train_learner( start = args.train_start, end = args.train_end,
-                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
-                       eps = args.eps, eps_decay = args.eps_decay )
+                        symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                        eps = args.eps, eps_decay = args.eps_decay, indicators=indicator)
 
     # Test the learned policy and see how it does.
     
     # In sample.
-    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+    port = env.test_learner(start = args.test_start, end = args.test_end, symbol = args.symbol, indicators=indicator)
+    port.name =(solo_names[i])
+    print(port)
+    solo_comparisons =  pd.concat([solo_comparisons, port], axis=1)
 
     # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
     #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
-      
-for combo in itertools(range(8), 2):
-    # Create an instance of the environment class.
-    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
-                            share_limit = args.shares, indicators=combo)
+print(solo_comparisons)
+compare = pd.DataFrame(solo_comparisons['Baseline'])
+solo_comparisons = solo_comparisons.drop(columns='Baseline')
+print(solo_comparisons)
+top_three = solo_comparisons.iloc[-1, np.argsort(-solo_comparisons.values[0])[:3]]
+print(top_three)
+for i in top_three.index:
+    compare = pd.concat([compare, solo_comparisons[i]], axis=1)
 
+name = '/Users/Stephen/Desktop/FML/One_Indicator_Results.pdf'
+compare.plot.line(title='One Indicator Results', colormap=cm.Accent)
+plt.savefig(name)
+
+abr_names = ['WPR', 'BBP', 'OBV', 'RSI', 'AU', 'AD', 'S']
+
+seven_comparisons = baseline['Portfolio']
+seven_comparisons.name = 'Baseline'
+for combo in itertools.combinations(range(7), 7):
+    # Create an instance of the environment class.
+    
     # Construct, train, and store a Q-learning trader.
     env.train_learner( start = args.train_start, end = args.train_end,
-                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
-                       eps = args.eps, eps_decay = args.eps_decay )
+                        symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                        eps = args.eps, eps_decay = args.eps_decay, indicators=combo)
 
     # Test the learned policy and see how it does.
     
     # In sample.
-    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+    port = env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol, indicators=combo)
+    combo_name = ""
+    for c in combo:
+        combo_name += abr_names[c]
+        combo_name += " & "
+    port.name = combo_name[:-3]
+    seven_comparisons = pd.concat([seven_comparisons, port], axis=1)
 
     # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
-    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
     
-for combo in itertools(range(8), 3):
+print(seven_comparisons)
+compare = pd.DataFrame(seven_comparisons['Baseline'])
+seven_comparisons = seven_comparisons.drop(columns='Baseline')
+print(seven_comparisons)
+top_three = seven_comparisons.iloc[-1, np.argsort(-seven_comparisons.values[0])[:3]]
+print(top_three)
+for i in top_three.index:
+    compare = pd.concat([compare, seven_comparisons[i]], axis=1)
+    
+name = '/Users/Stephen/Desktop/FML/Seven_Indicator_Results.pdf'
+compare.plot.line(title='Seven Indicator Results', colormap=cm.Accent, alpha=0.5)
+plt.savefig(name)
+
+
+six_comparisons = baseline['Portfolio']
+six_comparisons.name = 'Baseline'
+for combo in itertools.combinations(range(7), 6):
     # Create an instance of the environment class.
-    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
-                            share_limit = args.shares, indicators=combo)
-
-    # Construct, train, and store a Q-learning trader.
-    env.train_learner( start = args.train_start, end = args.train_end,
-                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
-                       eps = args.eps, eps_decay = args.eps_decay )
-
-    # Test the learned policy and see how it does.
     
-    # In sample.
-    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
-
-    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
-    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
-    
-for combo in itertools(range(8), 4):
-    # Create an instance of the environment class.
-    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
-                            share_limit = args.shares, indicators=combo)
-
-    # Construct, train, and store a Q-learning trader.
-    env.train_learner( start = args.train_start, end = args.train_end,
-                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
-                       eps = args.eps, eps_decay = args.eps_decay )
-
-    # Test the learned policy and see how it does.
-    
-    # In sample.
-    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
-
-    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
-    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
-     
-    
-for combo in itertools(range(8), 5):
-    # Create an instance of the environment class.
-    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
-                            share_limit = args.shares, indicators=combo)
-
-    # Construct, train, and store a Q-learning trader.
-    env.train_learner( start = args.train_start, end = args.train_end,
-                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
-                       eps = args.eps, eps_decay = args.eps_decay )
-
-    # Test the learned policy and see how it does.
-    
-    # In sample.
-    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
-
-    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
-    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
-    
-for combo in itertools(range(8), 6):
-    # Create an instance of the environment class.
-    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
-                            share_limit = args.shares, indicators=combo)
-
-    # Construct, train, and store a Q-learning trader.
-    env.train_learner( start = args.train_start, end = args.train_end,
-                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
-                       eps = args.eps, eps_decay = args.eps_decay )
-
-    # Test the learned policy and see how it does.
-    
-    # In sample.
-    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
-
-    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
-    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
-      
-for combo in itertools(range(8), 7):
-    
-    # Create an instance of the environment class.
-    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
-                            share_limit = args.shares )
-
     # Construct, train, and store a Q-learning trader.
     env.train_learner( start = args.train_start, end = args.train_end,
                        symbol = args.symbol, trips = args.trips, dyna = args.dyna,
@@ -445,28 +392,180 @@ for combo in itertools(range(8), 7):
     # Test the learned policy and see how it does.
     
     # In sample.
-    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+    port = env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol, indicators=combo)
+    combo_name = ""
+    for c in combo:
+        combo_name += abr_names[c]
+        combo_name += " & "
+    port.name = combo_name[:-3]
+    six_comparisons = pd.concat([six_comparisons, port], axis=1)
 
     # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
-    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
+    
+print(six_comparisons)
+compare = pd.DataFrame(six_comparisons['Baseline'])
+six_comparisons = six_comparisons.drop(columns='Baseline')
+print(six_comparisons)
+top_three = six_comparisons.iloc[-1, np.argsort(-six_comparisons.values[0])[:3]]
+print(top_three)
+for i in top_three.index:
+    compare = pd.concat([compare, six_comparisons[i]], axis=1)
+
+name = '/Users/Stephen/Desktop/FML/Six_Indicator_Results.pdf'
+compare.plot.line(title='Six Indicator Results', colormap=cm.Accent, alpha=0.5)
+plt.savefig(name)
+
+
+five_comparisons = baseline['Portfolio']
+five_comparisons.name = 'Baseline'
+for combo in itertools.combinations(range(7), 5):
+    # Create an instance of the environment class.
+    
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay, indicators=combo)
+
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    port = env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol, indicators=combo)
+    combo_name = ""
+    for c in combo:
+        combo_name += abr_names[c]
+        combo_name += " & "
+    port.name = combo_name[:-3]
+    five_comparisons = pd.concat([five_comparisons, port], axis=1)
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
+    
+print(five_comparisons)
+compare = pd.DataFrame(five_comparisons['Baseline'])
+five_comparisons = five_comparisons.drop(columns='Baseline')
+print(five_comparisons)
+top_three = five_comparisons.iloc[-1, np.argsort(-five_comparisons.values[0])[:3]]
+print(top_three)
+for i in top_three.index:
+    compare = pd.concat([compare, five_comparisons[i]], axis=1)
+
+name = '/Users/Stephen/Desktop/FML/Five_Indicator_Results.pdf'
+compare.plot.line(title='Five Indicator Results', colormap=cm.Accent, alpha=0.5)
+plt.savefig(name)
+
+
+four_comparisons = baseline['Portfolio']
+four_comparisons.name = 'Baseline'
+for combo in itertools.combinations(range(7), 4):
+    # Create an instance of the environment class.
+    
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay, indicators=combo)
+
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    port = env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol, indicators=combo)
+    combo_name = ""
+    for c in combo:
+        combo_name += abr_names[c]
+        combo_name += " & "
+    port.name = combo_name[:-3]
+    four_comparisons = pd.concat([four_comparisons, port], axis=1)
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
+    
+print(four_comparisons)
+compare = pd.DataFrame(four_comparisons['Baseline'])
+four_comparisons = four_comparisons.drop(columns='Baseline')
+print(four_comparisons)
+top_three = four_comparisons.iloc[-1, np.argsort(-four_comparisons.values[0])[:3]]
+print(top_three)
+for i in top_three.index:
+    compare = pd.concat([compare, four_comparisons[i]], axis=1)
     
 
-indicators = range(8)
-# Create an instance of the environment class.
-env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
-                        share_limit = args.shares )
+name = '/Users/Stephen/Desktop/FML/Four_Indicator_Results.pdf'
+compare.plot.line(title='Four Indicator Results', colormap=cm.Accent, alpha=0.5)
+plt.savefig(name)
 
-# Construct, train, and store a Q-learning trader.
-env.train_learner( start = args.train_start, end = args.train_end,
-                   symbol = args.symbol, trips = args.trips, dyna = args.dyna,
-                   eps = args.eps, eps_decay = args.eps_decay, indicators = indicators)
 
-# Test the learned policy and see how it does.
+three_comparisons = baseline['Portfolio']
+three_comparisons.name = 'Baseline'
+for combo in itertools.combinations(range(7), 3):
+    # Create an instance of the environment class.
+    
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay, indicators=combo)
 
-# In sample.
-env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    port = env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol, indicators=combo)
+    combo_name = ""
+    for c in combo:
+        combo_name += abr_names[c]
+        combo_name += " & "
+    port.name = combo_name[:-3]
+    three_comparisons = pd.concat([three_comparisons, port], axis=1)
 
-# Out of sample.  Only do this once you are fully satisfied with the in sample performance!
-#env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
-  
-  
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
+    
+print(three_comparisons)
+compare = pd.DataFrame(three_comparisons['Baseline'])
+three_comparisons = three_comparisons.drop(columns='Baseline')
+print(three_comparisons)
+top_three = three_comparisons.iloc[-1, np.argsort(-three_comparisons.values[0])[:3]]
+print(top_three)
+for i in top_three.index:
+    compare = pd.concat([compare, three_comparisons[i]], axis=1)
+    
+
+name = '/Users/Stephen/Desktop/FML/Three_Indicator_Results.pdf'
+compare.plot.line(title='Three Indicator Results', colormap=cm.Accent, alpha=0.5)
+plt.savefig(name)
+
+
+two_comparisons = baseline['Portfolio']
+two_comparisons.name = 'Baseline'
+for combo in itertools.combinations(range(7), 2):
+    # Create an instance of the environment class.
+    
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay, indicators=combo)
+
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    port = env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol, indicators=combo)
+    combo_name = ""
+    for c in combo:
+        combo_name += abr_names[c]
+        combo_name += " & "
+    port.name = combo_name[:-3]
+    seven_comparisons = pd.concat([two_comparisons, port], axis=1)
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
+    
+print(two_comparisons)
+compare = pd.DataFrame(two_comparisons['Baseline'])
+two_comparisons = two_comparisons.drop(columns='Baseline')
+print(seven_comparisons)
+top_three = two_comparisons.iloc[-1, np.argsort(-two_comparisons.values[0])[:3]]
+print(top_three)
+for i in top_three.index:
+    compare = pd.concat([compare, two_comparisons[i]], axis=1)
+
+name = '/Users/Stephen/Desktop/FML/Two_Indicator_Results.pdf'
+compare.plot.line(title='Two Indicator Results', colormap=cm.Accent, alpha=0.5)
+plt.savefig(name)

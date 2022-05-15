@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Wed Apr  6 10:46:33 2022
-
 @author: Stephen Crawford 
 """
 
@@ -30,7 +29,6 @@ import numpy as np
 
 """
 Helper function to read data files of requested stocks and extract date range 
-
 @param start_date: The start of the date range you want to extract
 @parem end_date: The end of the date range you want to extract
 @param symbols: A list of stock ticker symbols
@@ -65,9 +63,7 @@ def get_data(start_date, end_date, symbols, column_name = 'Adj Close', include_s
 
 """
 Helper function to calculate the Simple Moving Average of a dataframe.
-
 Adapted from the vectorized code handout. 
-
 @param dataframe: A dataframe of the price history of the stocks whose SMA we wish to calculate.
 @param window_size: The number of days to include in the SMA widnow. 
 @return a dataframe with the SMA-window_size for each stock in the original dataframe. 
@@ -80,9 +76,7 @@ def SMA(dataframe, window_size):
 
 """
 Helper function to get the SMA ratio.
-
 Adapted from the vectorized code handout. 
-
 @param dataframe: A dataframe of the price history of the stocks whose SMA we wish to calculate.
 @param window_size: The number of days to include in the SMA widnow. 
 @return a dataframe consisting of the price divided by the SMA. 
@@ -97,9 +91,7 @@ def SMA_ratio(dataframe, window_size):
     
 """
 Helper function to calculate the Bollinger Bands of a dataframe. 
-
 Adapted from vectorized code handout.
-
 @param dataframe: The price history of the stocks whose Bollinger Bands we want to calculate 
 @param band_range: The scaling value for the range of the bands--how many standard deviations they should be from SMA
 @return dataframe with the top and bottom Bollinger Bands as additional columns 
@@ -121,9 +113,7 @@ def Bollinger_Bands(dataframe, window_size, band_range=2):
 
 """
 Helper function to calculate the Bollinger Bands Percentage of a dataframe. 
-
 Adapted from vectorized code handout.
-
 @param dataframe: The price history of the stocks whose Bollinger Bands we want to calculate 
 @param band_range: The scaling value for the range of the bands--how many standard deviations they should be from SMA
 @return dataframe of the Bollinger Band percentage
@@ -140,10 +130,7 @@ def Bollinger_Bands_Percentage(dataframe, window_size, band_range=2):
 """
 A helper function used to calculate the on-balance volume indicator. 
 Measures the pos. & neg. flow of volume over time.
-
-
 REQUIRES VOLUME DATA AS WELL
-
 @param dataframe: The price AND volume data for the stocks whose on-balance volume we wish to calculate. 
 @return A dataframe of on-balance volume history for the stocks 
 """
@@ -178,7 +165,6 @@ def On_Balance_Volume(price_dataframe, volume_dataframe):
     
 """
 A helper function used to calculate the William's Precentage Range for a dataframe.
-
 @param dataframe: The data for the stocks we want to calculate for.
 @param window_size: The amount of periods to consider at a time
 @return A dataframe of the Willaims Percentage Range (0 to -100) for the given dataframe.
@@ -195,9 +181,7 @@ def Williams_Percentage_Range(dataframe, window_size=14):
 
 """
 Helper function to calculate the Relative Strength Index for the date range. 
-
 Adapted from vectorized code handout. 
-
 @param dataframe: A dataframe of the stocks to calculate the RSI for.
 @param window_size: The time slice that the RSI should be calculated using. 
 @return a dataframe of the RSI for each of the stocks in the dataframe over the time period. 
@@ -231,9 +215,7 @@ def Relative_Strength_Index(dataframe, window_size=14):
 """
 A helper function used to calculate the Aroon oscillator using a Aroon Indicator. 
 Measures strength of trend and likelihood to continue. 
-
 Found on Stackoverflow as posted by @user TheAfricanQuant https://stackoverflow.com/questions/47950466/how-to-build-aroon-indicator-with-python-pandas
-
 @param dataframe: The data for the stocks whose oscillation we want to determine.
 @param window_size: The number of periods to look at for the indicators
 @return A dataframe containing the Aroon Up and Aroon Down values as well as the Aroon Oscillator value itself. 
@@ -249,8 +231,6 @@ def Aroon_Oscillator(dataframe, window_size=25):
 
 """
 A helper function used to calculate the stochastic oscillatorr of a given dataframe. 
-
-
 @param dataframe: The data for the stocks we want to calculate the oscillator for.
 @param window_size: The time period to determine the oscillator with regard to. 
 @return A dataframe of the oscillator values for the stocks over the range. 
@@ -265,7 +245,3 @@ def Stochastic_Oscillator(dataframe, window_size=14):
     return oscillator 
 
     
-    
-    
-
-
