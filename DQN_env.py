@@ -326,7 +326,9 @@ for i in range(7):
 
     # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
     #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+name = '/Users/Stephen/Desktop/FML/One_Indicator_Results.csv'
 print(solo_comparisons)
+solo_comparisons.to_csv(name, index=True)
 compare = pd.DataFrame(solo_comparisons['Baseline'])
 solo_comparisons = solo_comparisons.drop(columns='Baseline')
 print(solo_comparisons)
@@ -366,6 +368,8 @@ for combo in itertools.combinations(range(7), 7):
     #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
     
 print(seven_comparisons)
+name = '/Users/Stephen/Desktop/FML/Seven_Indicator_Results.csv'
+seven_comparisons.to_csv(name, index=True)
 compare = pd.DataFrame(seven_comparisons['Baseline'])
 seven_comparisons = seven_comparisons.drop(columns='Baseline')
 print(seven_comparisons)
@@ -404,6 +408,8 @@ for combo in itertools.combinations(range(7), 6):
     #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
     
 print(six_comparisons)
+name = '/Users/Stephen/Desktop/FML/Six_Indicator_Results.csv'
+six_comparisons.to_csv(name, index=True)
 compare = pd.DataFrame(six_comparisons['Baseline'])
 six_comparisons = six_comparisons.drop(columns='Baseline')
 print(six_comparisons)
@@ -442,6 +448,8 @@ for combo in itertools.combinations(range(7), 5):
     #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
     
 print(five_comparisons)
+name = '/Users/Stephen/Desktop/FML/Five_Indicator_Results.csv'
+five_comparisons.to_csv(name, index=True)
 compare = pd.DataFrame(five_comparisons['Baseline'])
 five_comparisons = five_comparisons.drop(columns='Baseline')
 print(five_comparisons)
@@ -480,6 +488,8 @@ for combo in itertools.combinations(range(7), 4):
     #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
     
 print(four_comparisons)
+name = '/Users/Stephen/Desktop/FML/Four_Indicator_Results.csv'
+four_comparisons.to_csv(name, index=True)
 compare = pd.DataFrame(four_comparisons['Baseline'])
 four_comparisons = four_comparisons.drop(columns='Baseline')
 print(four_comparisons)
@@ -519,6 +529,8 @@ for combo in itertools.combinations(range(7), 3):
     #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
     
 print(three_comparisons)
+name = '/Users/Stephen/Desktop/FML/Three_Indicator_Results.csv'
+three_comparisons.to_csv(name, index=True)
 compare = pd.DataFrame(three_comparisons['Baseline'])
 three_comparisons = three_comparisons.drop(columns='Baseline')
 print(three_comparisons)
@@ -558,6 +570,8 @@ for combo in itertools.combinations(range(7), 2):
     #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol 
     
 print(two_comparisons)
+name = '/Users/Stephen/Desktop/FML/Two_Indicator_Results.csv'
+two_comparisons.to_csv(name, index=True)
 compare = pd.DataFrame(two_comparisons['Baseline'])
 two_comparisons = two_comparisons.drop(columns='Baseline')
 print(seven_comparisons)
