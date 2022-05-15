@@ -130,11 +130,12 @@ class DeepQLearner:
             grads = tape.gradient(loss, self.q_net.trainable_variables)
             self.optimizer.apply_gradients(zip(grads, self.q_net.trainable_variables))
             
-        if len(self.rewards_history) % 1000 == 0:
+        if len(self.rewards_history) % 1000 == 0 and len(self.rewards_history) != 100000:
             print("Updating weights")
             self.q_net_target.set_weights(self.q_net.get_weights())
-            plt.plot(self.loss_history)
-            plt.show()
+            if len (self.rewards_history) > 5000:
+                plt.plot(self.loss_history)
+                plt.show()
         
         
         self.prev_action = a

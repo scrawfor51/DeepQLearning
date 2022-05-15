@@ -24,6 +24,7 @@ import timeit
 import datetime 
 from matplotlib import cm
 from DeepQLearner import DeepQLearner
+import itertools
  
 TRIPS_WITHOUT_DYNA = 500
 TRIPS_WITH_DYNA = 50
@@ -31,13 +32,14 @@ FAILURE_RATE = 0
 
 class StockEnvironment:
 
-  def __init__ (self, fixed = 0, floating = 0, starting_cash = None, share_limit = None):
+  def __init__ (self, fixed = 0, floating = 0, starting_cash = None, share_limit = None, indicators = None):
     
     self.shares = share_limit
     self.fixed_cost = fixed
     self.floating_cost = floating
     self.starting_cash = starting_cash
     self.learner = None
+    self.indicators = indicators
 
   """
   Helper method to calculate all the indicator values for the date range.
@@ -54,15 +56,25 @@ class StockEnvironment:
    
     williams = tech_ind.Williams_Percentage_Range(price_data)
     
+    rsi = tech_ind.Relative_Strength_Index(price_data, 14)
+    
+    aroon = tech_ind.Aroon_Oscillator(price_data, 15)
+    
+    stochastic = tech_ind.Stochastic_Oscillator(price_data)
+    
     bb = tech_ind.Bollinger_Bands(price_data, 14)
-  
+    
     obv = tech_ind.On_Balance_Volume(price_data, volume_data)
+    
     world = price_data.copy()
     world.columns = ['Price']
     world['Williams Percent Range'] = williams['Williams Percentage']
-    
     world['Bollinger Band Percentage'] = (world['Price'].sub(bb['SMA'], fill_value=np.nan))/(bb['Top Band'].sub(bb['Bottom Band'], fill_value=np.nan))
     world['OBV Normalized'] = obv/(abs(obv).rolling(window=5, min_periods=5).sum()) * 100 # scaled between -100 and 100
+    world['RSI'] = rsi
+    world['Aroon Up'] = aroon['Up']
+    world['Aroon Down'] = aroon['Down']
+    world['Stochastic'] = stochastic
     world = world.ffill()
     world = world.bfill()
     return world
@@ -76,15 +88,14 @@ class StockEnvironment:
   @param holdings: How many shares of the stock the trader has.
   @return a number representing the state.
   """
-  def calc_state (self, df, day, holdings):
+  def calc_state (self, df, day, holdings, indicators):
     """ Quantizes the state to a single number. """
-
-   
-    current_williams = df.iloc[day, df.columns.get_loc('Williams Percent Range')] # 0 to -100 # 3 buckets 
-    current_bbp = df.iloc[day, df.columns.get_loc('Bollinger Band Percentage')] # x < 0 < x < sma < x < top band < x <--buckets 0, 1, 2, 3
-    current_obv = df.iloc[day, df.columns.get_loc('OBV Normalized')] 
- 
-    state_list = [holdings, current_bbp, current_williams, current_obv]
+    state_list = [holdings] 
+    for indicator in indicators:
+         
+        current_val = df.iloc[day, indicator] # 0 to -100 # 3 buckets 
+        state_list.append(current_val)
+  
     return state_list
   
 
@@ -107,11 +118,11 @@ class StockEnvironment:
     
     
     if dyna > 0:
-      learner = DeepQLearner(states=4, actions = 3, epsilon=eps,epsilon_decay=eps_decay, dyna=dyna)
+      learner = DeepQLearner(states=len(self.indicators) + 1, actions = 3, epsilon=eps,epsilon_decay=eps_decay, dyna=dyna)
     else:
-      learner = DeepQLearner(states=4, actions = 3, epsilon=eps,epsilon_decay=eps_decay)
+      learner = DeepQLearner(states=len(self.indicators) + 1, actions = 3, epsilon=eps,epsilon_decay=eps_decay)
     
-    start = self.calc_state(world, 0, 0)  # start with the new world at the start date and with no positions 
+    
     
     # Remember the total rewards of each trip individually.
     trip_rewards = []
@@ -133,11 +144,11 @@ class StockEnvironment:
         day_key = world.index[day_tracker] # get the index key for the given day, i.e. '2018-01-01'
         
         if day_tracker == 0:
-            a = learner.test(self.calc_state(world, day_tracker, holdings))
+            a = learner.test(self.calc_state(world, day_tracker, holdings, self.indicators))
             cash_reward = 0
         else: 
             r = world.iloc[day_tracker, world.columns.get_loc('Portfolio')]/world.iloc[day_tracker - 1, world.columns.get_loc('Portfolio')] - 1
-            a = learner.train(self.calc_state(world, day_tracker, holdings), r)
+            a = learner.train(self.calc_state(world, day_tracker, holdings, self.indicators), r)
             cash_reward = world.iloc[day_tracker, world.columns.get_loc('Portfolio')] - world.iloc[day_tracker - 1, world.columns.get_loc('Portfolio')]
             
         if a == 0:
@@ -210,7 +221,7 @@ class StockEnvironment:
       
       day_key = world.index[day_tracker] # get the index key for the given day, i.e. '2018-01-01'
       
-      state = self.calc_state(world, day_tracker, holdings)
+      state = self.calc_state(world, day_tracker, holdings, self.indicators)
       
       if day_tracker == 0:
           a = learner.test(state)
@@ -255,7 +266,11 @@ class StockEnvironment:
     baseline_port = baseline['Portfolio'] - self.starting_cash
     data = {'Learner': learner_portfolio, 'Baseline': baseline_port}
     compare = pd.DataFrame(data)
-    plot = compare.plot(title="QTrader vs. Baseline", colormap=cm.Accent)
+    indicators_list = ""
+    for ind in self.indicators:
+        indicators_list += world.columns[ind]
+        indicators_list += " "
+    plot = compare.plot(title=indicators_list[:-1], colormap=cm.Accent)
     plot.grid()
     trades = world['Positions'].copy()
     trades.iloc[1:] = trades.diff().iloc[1:]
@@ -276,6 +291,7 @@ class StockEnvironment:
             plt.axvline(x=day, color = 'black', alpha=0.25)
 
     plt.show()
+    return None
     
 if __name__ == '__main__':
   # Load the requested stock for the requested dates, instantiate a Q-Learning agent,
@@ -300,25 +316,157 @@ if __name__ == '__main__':
   sim_args.add_argument('--floating', default=0.00, type=float, help='Floating transaction cost.')
   sim_args.add_argument('--shares', default=1000, type=int, help='Number of shares to trade (also position limit).')
   sim_args.add_argument('--symbol', default='DIS', help='Stock symbol to trade.')
-  sim_args.add_argument('--trips', default=500, type=int, help='Round trips through training data.')
+  sim_args.add_argument('--trips', default=5, type=int, help='Round trips through training data.')
 
   args = parser.parse_args()
 
 
-  # Create an instance of the environment class.
-  env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
-                          share_limit = args.shares )
+for i in range(8):
+    indicator = [i]
+    # Create an instance of the environment class.
+    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
+                            share_limit = args.shares, indicators=indicator)
 
-  # Construct, train, and store a Q-learning trader.
-  env.train_learner( start = args.train_start, end = args.train_end,
-                     symbol = args.symbol, trips = args.trips, dyna = args.dyna,
-                     eps = args.eps, eps_decay = args.eps_decay )
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay )
 
-  # Test the learned policy and see how it does.
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+      
+for combo in itertools(range(8), 2):
+    # Create an instance of the environment class.
+    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
+                            share_limit = args.shares, indicators=combo)
+
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay )
+
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+    
+for combo in itertools(range(8), 3):
+    # Create an instance of the environment class.
+    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
+                            share_limit = args.shares, indicators=combo)
+
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay )
+
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+    
+for combo in itertools(range(8), 4):
+    # Create an instance of the environment class.
+    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
+                            share_limit = args.shares, indicators=combo)
+
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay )
+
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+     
+    
+for combo in itertools(range(8), 5):
+    # Create an instance of the environment class.
+    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
+                            share_limit = args.shares, indicators=combo)
+
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay )
+
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+    
+for combo in itertools(range(8), 6):
+    # Create an instance of the environment class.
+    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
+                            share_limit = args.shares, indicators=combo)
+
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay )
+
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+      
+for combo in itertools(range(8), 7):
+    
+    # Create an instance of the environment class.
+    env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
+                            share_limit = args.shares )
+
+    # Construct, train, and store a Q-learning trader.
+    env.train_learner( start = args.train_start, end = args.train_end,
+                       symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                       eps = args.eps, eps_decay = args.eps_decay, indicators=combo)
+
+    # Test the learned policy and see how it does.
+    
+    # In sample.
+    env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+
+    # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+    #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
+    
+
+indicators = range(8)
+# Create an instance of the environment class.
+env = StockEnvironment(fixed = args.fixed, floating = args.floating, starting_cash = args.cash,
+                        share_limit = args.shares )
+
+# Construct, train, and store a Q-learning trader.
+env.train_learner( start = args.train_start, end = args.train_end,
+                   symbol = args.symbol, trips = args.trips, dyna = args.dyna,
+                   eps = args.eps, eps_decay = args.eps_decay, indicators = indicators)
+
+# Test the learned policy and see how it does.
+
+# In sample.
+env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
+
+# Out of sample.  Only do this once you are fully satisfied with the in sample performance!
+#env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
   
-  # In sample.
-  env.test_learner( start = args.train_start, end = args.train_end, symbol = args.symbol )
-
-  # Out of sample.  Only do this once you are fully satisfied with the in sample performance!
-  #env.test_learner( start = args.test_start, end = args.test_end, symbol = args.symbol )
   

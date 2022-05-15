@@ -191,6 +191,79 @@ def Williams_Percentage_Range(dataframe, window_size=14):
     price['Williams Percentage'] = (numerator/denominator) * -100
     return price
     
+
+
+"""
+Helper function to calculate the Relative Strength Index for the date range. 
+
+Adapted from vectorized code handout. 
+
+@param dataframe: A dataframe of the stocks to calculate the RSI for.
+@param window_size: The time slice that the RSI should be calculated using. 
+@return a dataframe of the RSI for each of the stocks in the dataframe over the time period. 
+"""
+def Relative_Strength_Index(dataframe, window_size=14):
+    
+    rsi = dataframe.copy()
+    daily_returns = dataframe.copy()
+    daily_returns.values[1:,:] = dataframe.values[1:,:] - dataframe.values[:-1, :]
+    daily_returns.values[0, :] = np.nan
+    
+    up_returns = daily_returns[daily_returns >= 0].fillna(0).cumsum()
+    down_returns = -1 * daily_returns[daily_returns < 0].fillna(0).cumsum()
+    
+    up_day_gains = dataframe.copy()
+    up_day_gains.loc[:,:] = 0
+    up_day_gains.values[window_size:,:] = up_returns.values[window_size:,:] - up_returns.values[:-window_size,:]
+
+    down_day_losses = dataframe.copy()
+    down_day_losses.loc[:,:] = 0
+    down_day_losses.values[window_size:,:] = down_returns.values[window_size:,:] - down_returns.values[:-window_size,:]
+    
+    relative_strength = (up_day_gains / window_size) / (down_day_losses / window_size)
+    rsi = 100 - (100/ (1 + relative_strength))
+    rsi.iloc[:window_size, :] = np.nan
+    
+    rsi[rsi == np.inf] = 100
+    
+    return rsi
+
+"""
+A helper function used to calculate the Aroon oscillator using a Aroon Indicator. 
+Measures strength of trend and likelihood to continue. 
+
+Found on Stackoverflow as posted by @user TheAfricanQuant https://stackoverflow.com/questions/47950466/how-to-build-aroon-indicator-with-python-pandas
+
+@param dataframe: The data for the stocks whose oscillation we want to determine.
+@param window_size: The number of periods to look at for the indicators
+@return A dataframe containing the Aroon Up and Aroon Down values as well as the Aroon Oscillator value itself. 
+"""
+def Aroon_Oscillator(dataframe, window_size=25): 
+    
+   aroon = dataframe.copy()
+   aroon.columns = ['Price']
+   aroon['Up'] = (100 * aroon['Price'].rolling(window_size + 1).apply(lambda x : x.argmax()) / window_size).values
+   aroon['Down'] = (100 * aroon['Price'].rolling(window_size + 1).apply(lambda x : x.argmin()) / window_size).values
+    
+   return aroon
+
+"""
+A helper function used to calculate the stochastic oscillatorr of a given dataframe. 
+
+
+@param dataframe: The data for the stocks we want to calculate the oscillator for.
+@param window_size: The time period to determine the oscillator with regard to. 
+@return A dataframe of the oscillator values for the stocks over the range. 
+"""
+def Stochastic_Oscillator(dataframe, window_size=14):
+    
+    numerator = (dataframe - dataframe.rolling(window_size, min_periods=window_size).min())
+    denominator = (dataframe.rolling(window_size, min_periods=window_size).max()- dataframe.rolling(window_size, min_periods=window_size).min())
+    oscillator = 100 * (numerator / denominator)
+    
+    
+    return oscillator 
+
     
     
     
